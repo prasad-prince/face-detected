@@ -250,111 +250,247 @@ class PhoneDetector:
         return phone_found, frame
 
 class AudioAlert:
-    """Handles audio alert system with robust error handling"""
-    
+    """Handles audio alert system with robust error handling and proper playback management"""
+
     def __init__(self):
         self.alert_sound = None
+        self.current_channel = None
         self.last_alert_time = 0
         self.cooldown = 5  # seconds between alerts
+        self.sound_duration = 1.5  # seconds - longer for better noticeability
         self.mixer_initialized = False
-        
-        # Initialize pygame mixer with error handling
+        self.sound_playing = False
+
+        # Initialize pygame mixer with comprehensive error handling
         try:
-            pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)
+            # Pre-initialize pygame if not already done
+            if not pygame.get_init():
+                pygame.init()
+
+            # Initialize mixer with optimal settings for Windows
+            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
             self.mixer_initialized = True
-            print("✓ Audio system initialized successfully")
+            print("✓ Audio system initialized successfully (44.1kHz, stereo)")
+
+            # Set up channel for dedicated alert playback
+            self.current_channel = pygame.mixer.Channel(0)  # Use channel 0 for alerts
+
         except Exception as e:
             print(f"⚠️  Warning: Could not initialize audio system: {e}")
             print("   Audio alerts will be simulated with console messages")
             self.mixer_initialized = False
-        
+
         # Try to load custom alert sound
-        if os.path.exists('alert.wav'):
-            try:
-                self.alert_sound = pygame.mixer.Sound('alert.wav')
-                print("✓ Loaded custom alert sound: alert.wav")
-            except Exception as e:
-                print(f"⚠️  Warning: Could not load custom sound: {e}")
-                self._create_default_sound()
-        else:
-            self._create_default_sound()
-    
-    def _create_default_sound(self):
-        """Create a default beep sound with error handling"""
+        self._load_alert_sound()
+
+    def _load_alert_sound(self):
+        """Load alert sound with comprehensive error handling"""
         if not self.mixer_initialized:
             print("✓ Audio alerts will use console notifications (mixer not available)")
             return
-            
+
+        # Try to load custom alert sound (WAV preferred)
+        custom_sound_files = ['alert.wav', 'alert.WAV', 'alert.mp3', 'alert.ogg']
+
+        for sound_file in custom_sound_files:
+            if os.path.exists(sound_file):
+                try:
+                    self.alert_sound = pygame.mixer.Sound(sound_file)
+                    print(f"✓ Loaded custom alert sound: {sound_file}")
+                    return
+                except Exception as e:
+                    print(f"⚠️  Warning: Could not load {sound_file}: {e}")
+                    continue
+
+        # If no custom sound found, create default beep
+        print("ℹ️  No custom alert sound found, creating default beep...")
+        self._create_default_sound()
+
+    def _create_default_sound(self):
+        """Create a reliable default beep sound"""
+        if not self.mixer_initialized:
+            print("✓ Audio alerts will use console notifications (mixer not available)")
+            return
+
         try:
-            sample_rate = 22050
-            duration = 0.5
-            frequency = 800
-            
-            # Generate sine wave
+            # Use higher quality settings for better sound
+            sample_rate = 44100
+            duration = self.sound_duration
+            frequency = 1000  # Higher frequency for better audibility
+
+            # Generate sine wave with fade in/out for smoother sound
             t = np.linspace(0, duration, int(sample_rate * duration))
-            wave = np.sin(2 * np.pi * frequency * t)
-            
-            # Convert to 16-bit format
+
+            # Create fade envelope
+            fade_samples = int(0.1 * sample_rate)  # 100ms fade
+            fade_in = np.linspace(0, 1, fade_samples)
+            fade_out = np.linspace(1, 0, fade_samples)
+            sustain = np.ones(len(t) - 2 * fade_samples)
+
+            envelope = np.concatenate([fade_in, sustain, fade_out])
+
+            # Generate sine wave
+            wave = np.sin(2 * np.pi * frequency * t) * envelope
+
+            # Add some harmonics for richer sound
+            wave += 0.3 * np.sin(2 * np.pi * frequency * 2 * t) * envelope
+
+            # Normalize and convert to 16-bit
+            wave = wave / np.max(np.abs(wave))  # Normalize
             wave = (wave * 32767).astype(np.int16)
-            
+
             # Create stereo sound
             stereo_wave = np.column_stack((wave, wave))
-            
+
             self.alert_sound = pygame.sndarray.make_sound(stereo_wave)
             print("✓ Using default beep sound (add alert.wav for custom sound)")
-            
+
         except Exception as e:
             print(f"⚠️  Warning: Could not create default sound: {e}")
             print("   Audio alerts will use console notifications")
             self.alert_sound = None
-    
-    def play_alert(self, face_detected=False):
+
+    def play_alert(self, face_detected=False, require_face=True):
         """
-        Play alert only if face is detected and cooldown has passed
-        This ensures alert only when student is present but distracted
+        Play alert based on detection conditions.
+        Manages sound playback to prevent overlapping and ensure completion.
+
+        Args:
+            face_detected (bool): Whether face is currently detected
+            require_face (bool): Whether face detection is required to trigger alert
         """
         current_time = time.time()
-        
-        if face_detected and (current_time - self.last_alert_time) > self.cooldown:
-            self.last_alert_time = current_time
-            
-            # Try to play actual sound
-            if self.mixer_initialized and self.alert_sound is not None:
-                try:
-                    self.alert_sound.play()
+
+        # Check if alert conditions are met
+        conditions_met = False
+        if require_face:
+            # Original logic: require both face and cooldown
+            conditions_met = face_detected and (current_time - self.last_alert_time) > self.cooldown
+        else:
+            # New logic: only require cooldown (for phone-only alerts)
+            conditions_met = (current_time - self.last_alert_time) > self.cooldown
+
+        if not conditions_met:
+            return False
+
+        # Check if sound is already playing
+        if self.sound_playing:
+            return False
+
+        self.last_alert_time = current_time
+
+        # Try to play actual sound
+        if self.mixer_initialized and self.alert_sound is not None and self.current_channel is not None:
+            try:
+                # Stop any currently playing sound on this channel
+                if self.current_channel.get_busy():
+                    self.current_channel.stop()
+
+                # Play the sound and mark as playing
+                self.current_channel.play(self.alert_sound)
+                self.sound_playing = True
+
+                if require_face:
                     print(f"🔊 ALERT: Phone detected while face visible at {datetime.now().strftime('%H:%M:%S')}")
-                    return True
-                except Exception as e:
-                    print(f"⚠️  Warning: Could not play audio alert: {e}")
-                    print(f"🔊 ALERT: Phone detected while face visible at {datetime.now().strftime('%H:%M:%S')} (console notification)")
-            else:
-                # Fallback to console notification
-                print(f"🔊 ALERT: Phone detected while face visible at {datetime.now().strftime('%H:%M:%S')} (console notification)")
+                else:
+                    print(f"🔊 ALERT: Phone detected at {datetime.now().strftime('%H:%M:%S')}")
                 return True
-        
+
+            except Exception as e:
+                print(f"⚠️  Warning: Could not play audio alert: {e}")
+                if require_face:
+                    print(f"🔊 ALERT: Phone detected while face visible at {datetime.now().strftime('%H:%M:%S')} (console notification)")
+                else:
+                    print(f"🔊 ALERT: Phone detected at {datetime.now().strftime('%H:%M:%S')} (console notification)")
+                self.sound_playing = False
+        else:
+            # Fallback to console notification
+            if require_face:
+                print(f"🔊 ALERT: Phone detected while face visible at {datetime.now().strftime('%H:%M:%S')} (console notification)")
+            else:
+                print(f"🔊 ALERT: Phone detected at {datetime.now().strftime('%H:%M:%S')} (console notification)")
+
         return False
-    
+
+    def play_phone_alert(self):
+        """
+        Play alert when phone is detected (no face requirement).
+        This is the new method for phone-only detection alerts.
+        """
+        return self.play_alert(face_detected=False, require_face=False)
+
+    def update(self):
+        """Update method to be called in main loop to handle sound completion"""
+        # Check if sound has finished playing
+        if self.sound_playing and self.current_channel:
+            if not self.current_channel.get_busy():
+                self.sound_playing = False
+
     def test_audio(self):
-        """Test audio functionality"""
+        """Test audio functionality with comprehensive diagnostics"""
         print("\n🔊 Testing Audio System...")
-        
+
         if not self.mixer_initialized:
             print("❌ Audio mixer not initialized")
+            print("   Possible causes:")
+            print("   - pygame not installed: pip install pygame")
+            print("   - Audio drivers not available")
+            print("   - System audio disabled")
             return False
-            
+
         if self.alert_sound is None:
             print("❌ No alert sound available")
+            print("   The system should have created a default beep sound")
             return False
-            
+
+        if self.current_channel is None:
+            print("❌ No audio channel available")
+            return False
+
         try:
             print("▶️  Playing test sound...")
-            self.alert_sound.play()
-            pygame.time.wait(600)  # Wait for sound to finish
-            print("✅ Audio test successful!")
+            print(f"   Sound duration: {self.sound_duration}s")
+            print(f"   Mixer initialized: {self.mixer_initialized}")
+            print(f"   Channel available: {self.current_channel is not None}")
+
+            # Stop any currently playing sound
+            if self.current_channel.get_busy():
+                self.current_channel.stop()
+
+            # Play test sound
+            self.current_channel.play(self.alert_sound)
+            self.sound_playing = True
+
+            # Wait for sound to finish with timeout
+            start_time = time.time()
+            while self.current_channel.get_busy() and (time.time() - start_time) < 3.0:
+                pygame.time.wait(100)
+
+            self.sound_playing = False
+
+            if time.time() - start_time >= 3.0:
+                print("⚠️  Warning: Sound may not have completed properly")
+            else:
+                print("✅ Audio test successful!")
+
             return True
+
         except Exception as e:
             print(f"❌ Audio test failed: {e}")
+            print("   Detailed error information:")
+            import traceback
+            traceback.print_exc()
             return False
+
+    def force_stop(self):
+        """Force stop any currently playing alert sound"""
+        if self.current_channel:
+            try:
+                self.current_channel.stop()
+                self.sound_playing = False
+                print("✓ Audio alert stopped")
+            except Exception as e:
+                print(f"⚠️  Warning: Could not stop audio: {e}")
 
 class DistractionLogger:
     """Handles logging of distraction events"""
@@ -559,19 +695,21 @@ class StudyMonitor:
                 
                 # Handle phone detection state changes
                 if phone_detected_now and not self.phone_detected:
-                    # Phone just appeared
+                    # Phone just appeared - trigger alert immediately
                     self.phone_detected = True
                     self.logger.start_distraction(time.time())
                     
-                    # Play alert ONLY if face is also detected
-                    if face_detected:
-                        self.audio_alert.play_alert(face_detected=True)
-                        self.ui.warning_display_time = time.time()
+                    # Play alert when phone is detected (no face requirement needed)
+                    self.audio_alert.play_phone_alert()
+                    self.ui.warning_display_time = time.time()
                     
                 elif not phone_detected_now and self.phone_detected:
                     # Phone removed - end distraction
                     self.phone_detected = False
                     self.logger.end_distraction(time.time())
+                
+                # Update audio system to handle sound completion
+                self.audio_alert.update()
                 
                 # Draw interface
                 frame = self.ui.draw_interface(frame, face_detected, self.phone_detected, self.logger)
@@ -643,6 +781,9 @@ def main():
             print("- All UI elements")
             print("\nPress Q to quit | S to save report | P to simulate phone detection")
             
+            # Initialize audio system for demo
+            demo_audio = AudioAlert()
+            
             # Simple demo implementation
             demo_frame = np.zeros((480, 640, 3), dtype=np.uint8)
             frame_count = 0
@@ -659,10 +800,13 @@ def main():
                     if phone_detected_now and not phone_detected:
                         phone_detected = True
                         print("🎭 DEMO: Phone detected!")
-                        # Simulate alert sound (would play actual sound)
-                        print("🔊 ALERT: Phone detected while face visible")
+                        # Use actual audio alert system
+                        demo_audio.play_phone_alert()
                     elif not phone_detected_now and phone_detected:
                         phone_detected = False
+                    
+                    # Update audio system
+                    demo_audio.update()
                     
                     # Draw demo interface
                     demo_frame_copy = demo_frame.copy()
@@ -694,6 +838,7 @@ def main():
                     elif key == ord('p') or key == ord('P'):
                         phone_detected = True
                         print("🎭 MANUAL: Phone detection triggered!")
+                        demo_audio.play_phone_alert()
             
             finally:
                 cv2.destroyAllWindows()
@@ -709,71 +854,6 @@ def main():
     except Exception as e:
         print(f"❌ Fatal error: {e}")
         print("Please check your setup and try again")
-        print("🎮 DEMO MODE - Testing without webcam")
-        print("This mode simulates the monitoring interface for development/testing")
-        print("\nDemo features:")
-        print("- Simulated face and phone detection")
-        print("- Working audio alerts")
-        print("- Report generation")
-        print("- All UI elements")
-        print("\nPress Q to quit | S to save report | P to simulate phone detection")
-        
-        # Simple demo implementation
-        demo_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        frame_count = 0
-        phone_detected = False
-        
-        try:
-            while True:
-                frame_count += 1
-                face_detected = np.random.random() > 0.1  # 90% face detection
-                
-                # Simulate occasional phone detection
-                phone_detected_now = np.random.random() > 0.95
-                
-                if phone_detected_now and not phone_detected:
-                    phone_detected = True
-                    print("🎭 DEMO: Phone detected!")
-                    # Simulate alert sound (would play actual sound)
-                    print("🔊 ALERT: Phone detected while face visible")
-                elif not phone_detected_now and phone_detected:
-                    phone_detected = False
-                
-                # Draw demo interface
-                demo_frame_copy = demo_frame.copy()
-                cv2.putText(demo_frame_copy, 'AI Study Monitor - DEMO MODE', (20, 40),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-                
-                face_status = "✓ Detected" if face_detected else "✗ Not Detected"
-                face_color = (0, 255, 0) if face_detected else (0, 0, 255)
-                cv2.putText(demo_frame_copy, f'Face: {face_status}', (20, 75),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, face_color, 2)
-                
-                phone_status = "✗ Clear" if not phone_detected else "⚠ DETECTED!"
-                phone_color = (0, 255, 0) if not phone_detected else (0, 0, 255)
-                cv2.putText(demo_frame_copy, f'Phone: {phone_status}', (20, 105),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, phone_color, 2)
-                
-                cv2.putText(demo_frame_copy, f'Frames: {frame_count}', (20, 135),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                
-                cv2.putText(demo_frame_copy, 'Press Q to quit | S to save report', (10, 470),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
-                
-                cv2.imshow('AI Study Monitor - DEMO MODE', demo_frame_copy)
-                
-                key = cv2.waitKey(100) & 0xFF
-                if key == ord('q') or key == ord('Q'):
-                    print("\n⏹️ Demo ended by user")
-                    break
-                elif key == ord('p') or key == ord('P'):
-                    phone_detected = True
-                    print("🎭 MANUAL: Phone detection triggered!")
-        
-        finally:
-            cv2.destroyAllWindows()
-            print("\n🎮 Demo completed successfully!")
-        return
     
     try:
         monitor = StudyMonitor()
