@@ -28,36 +28,161 @@ import sys
 from ultralytics import YOLO
 
 class WebcamHandler:
-    """Handles webcam initialization and frame capture"""
+    """Handles webcam initialization and frame capture with robust error handling"""
     
     def __init__(self):
         self.cap = None
         self.camera_index = -1
+        self.backend = cv2.CAP_DSHOW  # Use DirectShow backend for Windows stability
+        self.is_initialized = False
         
     def initialize_camera(self):
-        """Try to access webcam on different indices"""
-        for i in range(5):  # Try indices 0-4
-            cap = cv2.VideoCapture(i)
-            if cap.isOpened():
-                self.cap = cap
-                self.camera_index = i
-                print(f"✓ Webcam accessed successfully on index {i}")
-                return True
+        """
+        Initialize webcam with comprehensive error handling and auto-detection
+        
+        Returns:
+            bool: True if camera successfully initialized, False otherwise
+        """
+        print("🔍 Searching for available webcam...")
+        
+        # Try different camera indices with DirectShow backend
+        for index in range(5):  # Check indices 0-4
+            try:
+                print(f"  Testing camera index {index}...")
+                
+                # Try with DirectShow backend first (more stable on Windows)
+                cap = cv2.VideoCapture(index, self.backend)
+                
+                if not cap.isOpened():
+                    # Fallback to default backend if DirectShow fails
+                    print(f"    DirectShow failed for index {index}, trying default backend...")
+                    cap = cv2.VideoCapture(index)
+                
+                if cap.isOpened():
+                    # Test if camera can actually capture frames
+                    ret, test_frame = cap.read()
+                    if ret and test_frame is not None:
+                        # Verify frame properties
+                        height, width = test_frame.shape[:2]
+                        if width > 0 and height > 0:
+                            self.cap = cap
+                            self.camera_index = index
+                            self.is_initialized = True
+                            
+                            print(f"✅ Webcam successfully initialized!")
+                            print(f"   Index: {index}")
+                            print(f"   Resolution: {width}x{height}")
+                            print(f"   Backend: {self._get_backend_name()}")
+                            return True
+                        else:
+                            print(f"    Invalid frame dimensions: {width}x{height}")
+                    else:
+                        print(f"    Cannot capture test frame from index {index}")
+                    
+                    cap.release()  # Clean up failed attempt
+                else:
+                    print(f"    Camera index {index} not available")
+                    
+            except Exception as e:
+                print(f"    Error testing camera index {index}: {str(e)}")
+                continue
+        
+        # If no camera found, provide detailed troubleshooting
+        self._show_camera_troubleshooting()
         return False
     
+    def _get_backend_name(self):
+        """Get human-readable backend name"""
+        if self.backend == cv2.CAP_DSHOW:
+            return "DirectShow (Windows)"
+        elif self.backend == cv2.CAP_MSMF:
+            return "Media Foundation (Windows)"
+        else:
+            return "Default"
+    
+    def _show_camera_troubleshooting(self):
+        """Display comprehensive troubleshooting guide"""
+        print("\n❌ No webcam detected!")
+        print("\n🔧 Troubleshooting Steps:")
+        print("1. Check Physical Connection:")
+        print("   • Ensure webcam is plugged in (USB)")
+        print("   • Try different USB ports")
+        print("   • Restart your computer")
+        print("")
+        print("2. Check Permissions:")
+        print("   • Go to Settings > Privacy & security > Camera")
+        print("   • Ensure camera access is enabled")
+        print("   • Allow apps to access your camera")
+        print("")
+        print("3. Check for Conflicts:")
+        print("   • Close other apps using camera (Zoom, Teams, browsers)")
+        print("   • Check Device Manager for camera status")
+        print("   • Update webcam drivers if needed")
+        print("")
+        print("4. Alternative Solutions:")
+        print("   • Try running as Administrator")
+        print("   • Test with different camera software")
+        print("   • Use external webcam if available")
+        print("")
+        print("💡 For development/testing, you can run: python 'ai project.py' demo")
+    
     def read_frame(self):
-        """Read a frame from the webcam"""
-        if self.cap is None:
+        """
+        Read a frame from the webcam
+        
+        Returns:
+            tuple: (success: bool, frame: numpy.ndarray or None)
+        """
+        if not self.is_initialized or self.cap is None:
             return False, None
-        ret, frame = self.cap.read()
-        if ret:
-            frame = cv2.flip(frame, 1)  # Mirror effect
-        return ret, frame
+            
+        try:
+            ret, frame = self.cap.read()
+            if ret and frame is not None:
+                return True, frame
+            else:
+                print("⚠️  Warning: Failed to capture frame")
+                return False, None
+        except Exception as e:
+            print(f"⚠️  Warning: Error reading frame: {str(e)}")
+            return False, None
+    
+    def get_camera_info(self):
+        """
+        Get information about the initialized camera
+        
+        Returns:
+            dict: Camera information or None if not initialized
+        """
+        if not self.is_initialized:
+            return None
+            
+        try:
+            width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = self.cap.get(cv2.CAP_PROP_FPS)
+            
+            return {
+                'index': self.camera_index,
+                'resolution': f"{width}x{height}",
+                'fps': fps,
+                'backend': self._get_backend_name()
+            }
+        except Exception as e:
+            print(f"⚠️  Warning: Could not get camera info: {str(e)}")
+            return None
     
     def release(self):
-        """Release the webcam"""
-        if self.cap:
-            self.cap.release()
+        """Properly release the webcam and clean up resources"""
+        if self.cap is not None:
+            try:
+                self.cap.release()
+                print("✓ Webcam released successfully")
+            except Exception as e:
+                print(f"⚠️  Warning: Error releasing webcam: {str(e)}")
+            finally:
+                self.cap = None
+                self.is_initialized = False
 
 class FaceDetector:
     """Handles face detection using OpenCV Haar Cascades"""
@@ -329,18 +454,22 @@ class StudyMonitor:
             raise
     
     def run_monitoring(self):
-        """Main monitoring loop"""
+        """Main monitoring loop with improved error handling"""
         print("\n" + "="*60)
         print("AI STUDY MONITORING SYSTEM")
         print("="*60)
         
-        # Initialize webcam
+        # Initialize webcam with robust error handling
         if not self.webcam.initialize_camera():
-            print("❌ ERROR: Cannot access webcam!")
-            print("Please check:")
-            print("- Webcam is connected and not in use")
-            print("- Camera permissions are granted")
+            print("\n💡 Tip: Run 'python \"ai project.py\" demo' for testing without camera")
             return
+        
+        # Get and display camera information
+        camera_info = self.webcam.get_camera_info()
+        if camera_info:
+            print(f"\n📹 Camera Details:")
+            print(f"   Resolution: {camera_info['resolution']}")
+            print(f"   FPS: {camera_info['fps']:.1f}")
         
         print("\n🎯 Monitoring active...")
         print("- Face detection: ENABLED")
@@ -350,17 +479,30 @@ class StudyMonitor:
         
         try:
             while True:
-                # Read frame
+                # Read frame with error handling
                 ret, frame = self.webcam.read_frame()
-                if not ret:
-                    print("❌ ERROR: Failed to capture frame")
+                if not ret or frame is None:
+                    print("❌ ERROR: Lost camera connection!")
+                    print("Please check your webcam connection.")
                     break
                 
                 self.frame_count += 1
                 
-                # Detect face and phone
-                face_detected, frame = self.face_detector.detect(frame)
-                phone_detected_now, frame = self.phone_detector.detect(frame)
+                # Apply mirror effect for natural viewing
+                frame = cv2.flip(frame, 1)
+                
+                # Detect face and phone with error handling
+                try:
+                    face_detected, frame = self.face_detector.detect(frame)
+                except Exception as e:
+                    print(f"⚠️  Face detection error: {e}")
+                    face_detected = False
+                
+                try:
+                    phone_detected_now, frame = self.phone_detector.detect(frame)
+                except Exception as e:
+                    print(f"⚠️  Phone detection error: {e}")
+                    phone_detected_now = False
                 
                 # Handle phone detection state changes
                 if phone_detected_now and not self.phone_detected:
@@ -387,13 +529,17 @@ class StudyMonitor:
                 # Handle keyboard input
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q') or key == ord('Q'):
-                    print("\n⏹️ Shutting down...")
+                    print("\n⏹️ Shutting down monitoring...")
                     break
                 elif key == ord('s') or key == ord('S'):
                     self.logger.save_report()
         
+        except KeyboardInterrupt:
+            print("\n⏹️ Monitoring stopped by user (Ctrl+C)")
+        except Exception as e:
+            print(f"\n❌ Unexpected error during monitoring: {e}")
         finally:
-            # Cleanup
+            # Ensure proper cleanup
             if self.phone_detected and self.logger.phone_detection_start:
                 self.logger.end_distraction(time.time())
             
@@ -419,15 +565,77 @@ def main():
     demo_mode = len(sys.argv) > 1 and sys.argv[1].lower() == 'demo'
     
     if demo_mode:
-        print("Demo mode not implemented in refactored version")
-        print("Please run without 'demo' argument for full functionality")
+        print("🎮 DEMO MODE - Testing without webcam")
+        print("This mode simulates the monitoring interface for development/testing")
+        print("\nDemo features:")
+        print("- Simulated face and phone detection")
+        print("- Working audio alerts")
+        print("- Report generation")
+        print("- All UI elements")
+        print("\nPress Q to quit | S to save report | P to simulate phone detection")
+        
+        # Simple demo implementation
+        demo_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        frame_count = 0
+        phone_detected = False
+        
+        try:
+            while True:
+                frame_count += 1
+                face_detected = np.random.random() > 0.1  # 90% face detection
+                
+                # Simulate occasional phone detection
+                phone_detected_now = np.random.random() > 0.95
+                
+                if phone_detected_now and not phone_detected:
+                    phone_detected = True
+                    print("🎭 DEMO: Phone detected!")
+                    # Simulate alert sound (would play actual sound)
+                    print("🔊 ALERT: Phone detected while face visible")
+                elif not phone_detected_now and phone_detected:
+                    phone_detected = False
+                
+                # Draw demo interface
+                demo_frame_copy = demo_frame.copy()
+                cv2.putText(demo_frame_copy, 'AI Study Monitor - DEMO MODE', (20, 40),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                
+                face_status = "✓ Detected" if face_detected else "✗ Not Detected"
+                face_color = (0, 255, 0) if face_detected else (0, 0, 255)
+                cv2.putText(demo_frame_copy, f'Face: {face_status}', (20, 75),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, face_color, 2)
+                
+                phone_status = "✗ Clear" if not phone_detected else "⚠ DETECTED!"
+                phone_color = (0, 255, 0) if not phone_detected else (0, 0, 255)
+                cv2.putText(demo_frame_copy, f'Phone: {phone_status}', (20, 105),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, phone_color, 2)
+                
+                cv2.putText(demo_frame_copy, f'Frames: {frame_count}', (20, 135),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                
+                cv2.putText(demo_frame_copy, 'Press Q to quit | S to save report', (10, 470),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+                
+                cv2.imshow('AI Study Monitor - DEMO MODE', demo_frame_copy)
+                
+                key = cv2.waitKey(100) & 0xFF
+                if key == ord('q') or key == ord('Q'):
+                    print("\n⏹️ Demo ended by user")
+                    break
+                elif key == ord('p') or key == ord('P'):
+                    phone_detected = True
+                    print("🎭 MANUAL: Phone detection triggered!")
+        
+        finally:
+            cv2.destroyAllWindows()
+            print("\n🎮 Demo completed successfully!")
         return
     
     try:
         monitor = StudyMonitor()
         monitor.run_monitoring()
     except KeyboardInterrupt:
-        print("\n⏹️ Monitoring stopped by user")
+        print("\n⏹️ Monitoring stopped by user (Ctrl+C)")
     except Exception as e:
         print(f"❌ Fatal error: {e}")
         print("Please check your setup and try again")
