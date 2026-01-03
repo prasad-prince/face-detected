@@ -65,9 +65,28 @@ The YOLOv8 model downloads automatically on first run. Haar cascades are include
 python "ai project.py"
 ```
 
+### Advanced Modes
+
+**Demo Mode** (No webcam required):
+```bash
+python "ai project.py" demo
+```
+- Simulates monitoring interface for testing
+- Perfect for presentations and development
+- Includes all UI elements and simulated detections
+
+**Audio Test Mode** (Test audio system only):
+```bash
+python "ai project.py" test-audio
+```
+- Independently tests audio functionality
+- Useful for troubleshooting sound issues
+- Validates pygame mixer setup
+
 ### Controls
 - **Q**: Quit the application
 - **S**: Save current session report
+- **P** (Demo mode only): Manually trigger phone detection
 
 ### Custom Audio
 Add `alert.wav` file to the project directory for custom alert sounds.
@@ -101,6 +120,7 @@ Add `alert.wav` file to the project directory for custom alert sounds.
 
 ## 📊 Sample Output
 
+### Normal Monitoring Mode
 ```
 ==================================================
 AI STUDY MONITORING SYSTEM
@@ -120,6 +140,35 @@ SESSION SUMMARY
 Total frames processed: 1250
 Total distractions: 3
 Total distraction time: 45 seconds
+```
+
+### Demo Mode Output
+```
+🎮 DEMO MODE - Testing without webcam
+This mode simulates the monitoring interface for development/testing
+
+Demo features:
+- Simulated face and phone detection
+- Working audio alerts
+- Report generation
+- All UI elements
+
+🎭 DEMO: Phone detected!
+🔊 ALERT: Phone detected while face visible
+```
+
+### Audio Test Mode Output
+```
+🔊 AUDIO TEST MODE
+Testing audio system independently...
+✓ Audio system initialized successfully
+✓ Using default beep sound (add alert.wav for custom sound)
+
+🔊 Testing Audio System...
+▶️  Playing test sound...
+✅ Audio test successful!
+
+✅ Audio system is working correctly!
 ```
 
 ## 🎓 College Project Features
