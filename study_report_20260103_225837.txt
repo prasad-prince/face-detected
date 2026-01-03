@@ -1,0 +1,43 @@
+==================================================
+AI STUDY MONITOR - SESSION REPORT
+==================================================
+
+Date: 2026-01-03 22:58:37
+
+Total Distractions: 29
+Total Distraction Time: 2 seconds
+Average Distraction: 0 seconds
+
+Distraction Log:
+--------------------------------------------------
+1. Start: 22:57:46 | End: 22:57:46 | Duration: 0.1s
+2. Start: 22:57:47 | End: 22:57:47 | Duration: 0.1s
+3. Start: 22:57:49 | End: 22:57:49 | Duration: 0.1s
+4. Start: 22:57:49 | End: 22:57:49 | Duration: 0.1s
+5. Start: 22:57:50 | End: 22:57:50 | Duration: 0.1s
+6. Start: 22:57:56 | End: 22:57:56 | Duration: 0.1s
+7. Start: 22:57:57 | End: 22:57:57 | Duration: 0.1s
+8. Start: 22:57:58 | End: 22:57:58 | Duration: 0.1s
+9. Start: 22:58:00 | End: 22:58:00 | Duration: 0.1s
+10. Start: 22:58:01 | End: 22:58:01 | Duration: 0.1s
+11. Start: 22:58:02 | End: 22:58:02 | Duration: 0.1s
+12. Start: 22:58:03 | End: 22:58:03 | Duration: 0.1s
+13. Start: 22:58:09 | End: 22:58:09 | Duration: 0.1s
+14. Start: 22:58:13 | End: 22:58:13 | Duration: 0.1s
+15. Start: 22:58:16 | End: 22:58:16 | Duration: 0.1s
+16. Start: 22:58:16 | End: 22:58:16 | Duration: 0.1s
+17. Start: 22:58:18 | End: 22:58:18 | Duration: 0.1s
+18. Start: 22:58:19 | End: 22:58:20 | Duration: 0.1s
+19. Start: 22:58:22 | End: 22:58:22 | Duration: 0.1s
+20. Start: 22:58:24 | End: 22:58:25 | Duration: 0.1s
+21. Start: 22:58:25 | End: 22:58:25 | Duration: 0.1s
+22. Start: 22:58:26 | End: 22:58:26 | Duration: 0.1s
+23. Start: 22:58:28 | End: 22:58:28 | Duration: 0.1s
+24. Start: 22:58:30 | End: 22:58:30 | Duration: 0.1s
+25. Start: 22:58:32 | End: 22:58:32 | Duration: 0.1s
+26. Start: 22:58:32 | End: 22:58:33 | Duration: 0.1s
+27. Start: 22:58:34 | End: 22:58:34 | Duration: 0.1s
+28. Start: 22:58:35 | End: 22:58:35 | Duration: 0.1s
+29. Start: 22:58:37 | End: 22:58:37 | Duration: 0.1s
+
+==================================================

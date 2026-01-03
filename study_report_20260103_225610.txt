@@ -1,0 +1,26 @@
+==================================================
+AI STUDY MONITOR - SESSION REPORT
+==================================================
+
+Date: 2026-01-03 22:56:10
+
+Total Distractions: 12
+Total Distraction Time: 1 seconds
+Average Distraction: 0 seconds
+
+Distraction Log:
+--------------------------------------------------
+1. Start: 22:55:53 | End: 22:55:54 | Duration: 0.1s
+2. Start: 22:55:54 | End: 22:55:54 | Duration: 0.1s
+3. Start: 22:55:55 | End: 22:55:55 | Duration: 0.2s
+4. Start: 22:55:57 | End: 22:55:57 | Duration: 0.1s
+5. Start: 22:55:59 | End: 22:55:59 | Duration: 0.1s
+6. Start: 22:56:00 | End: 22:56:00 | Duration: 0.1s
+7. Start: 22:56:01 | End: 22:56:01 | Duration: 0.1s
+8. Start: 22:56:02 | End: 22:56:02 | Duration: 0.1s
+9. Start: 22:56:05 | End: 22:56:05 | Duration: 0.1s
+10. Start: 22:56:05 | End: 22:56:06 | Duration: 0.1s
+11. Start: 22:56:06 | End: 22:56:06 | Duration: 0.1s
+12. Start: 22:56:07 | End: 22:56:08 | Duration: 0.1s
+
+==================================================
