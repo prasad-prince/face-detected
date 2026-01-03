@@ -1,138 +1,259 @@
+"""
+AI Study Monitor - College Mini Project
+=======================================
+
+This project implements a real-time study monitoring system using computer vision.
+It detects student faces and mobile phones to monitor study sessions and alert
+when distractions occur.
+
+Features:
+- Face detection using OpenCV Haar Cascades
+- Phone detection using YOLOv8
+- Audio alerts when phone detected while face is visible
+- Real-time monitoring interface
+- Distraction logging and reporting
+- Demo mode for testing without webcam
+
+Author: [Your Name]
+Date: January 2026
+"""
+
 import cv2
-import mediapipe as mp
 import numpy as np
 from datetime import datetime
 import pygame
 import time
-from collections import deque
-from ultralytics import YOLO
 import os
+import sys
+from ultralytics import YOLO
 
-class StudyMonitor:
+class WebcamHandler:
+    """Handles webcam initialization and frame capture"""
+    
     def __init__(self):
-        # Initialize YOLO for phone detection
-        print("Loading YOLO model...")
-        self.yolo_model = YOLO('yolov8n.pt')  # Using nano model for speed
+        self.cap = None
+        self.camera_index = -1
         
-        # Initialize OpenCV Face Detection
-        print("Loading Face Detection model...")
+    def initialize_camera(self):
+        """Try to access webcam on different indices"""
+        for i in range(5):  # Try indices 0-4
+            cap = cv2.VideoCapture(i)
+            if cap.isOpened():
+                self.cap = cap
+                self.camera_index = i
+                print(f"✓ Webcam accessed successfully on index {i}")
+                return True
+        return False
+    
+    def read_frame(self):
+        """Read a frame from the webcam"""
+        if self.cap is None:
+            return False, None
+        ret, frame = self.cap.read()
+        if ret:
+            frame = cv2.flip(frame, 1)  # Mirror effect
+        return ret, frame
+    
+    def release(self):
+        """Release the webcam"""
+        if self.cap:
+            self.cap.release()
+
+class FaceDetector:
+    """Handles face detection using OpenCV Haar Cascades"""
+    
+    def __init__(self):
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        
-        # Initialize audio
-        pygame.mixer.init()
-        self.create_audio_alert()
-        
-        # Tracking variables
-        self.phone_detected = False
-        self.face_detected = False
-        self.last_alert_time = 0
-        self.alert_cooldown = 5  # seconds between alerts
-        
-        # Distraction logging
-        self.distraction_log = []
-        self.phone_detection_start = None
-        self.total_distraction_time = 0
-        
-        # Statistics
-        self.frame_count = 0
-        self.phone_detections = 0
-        self.no_face_count = 0
-        
-        # Display settings
-        self.warning_display_time = 0
-        
-    def create_audio_alert(self):
-        """Create a simple beep sound as alert or load custom audio file"""
-        if os.path.exists('alert.wav'):
-            self.alert_sound = pygame.mixer.Sound('alert.wav')
-            print("✓ Loaded custom alert sound: alert.wav")
-        else:
-            # Generate a simple beep sound
-            sample_rate = 22050
-            duration = 0.5
-            frequency = 800
-            
-            # Generate sine wave
-            t = np.linspace(0, duration, int(sample_rate * duration))
-            wave = np.sin(2 * np.pi * frequency * t)
-            
-            # Convert to 16-bit format
-            wave = (wave * 32767).astype(np.int16)
-            
-            # Create stereo sound
-            stereo_wave = np.column_stack((wave, wave))
-            
-            self.alert_sound = pygame.sndarray.make_sound(stereo_wave)
-            print("✓ Using generated beep sound (add alert.wav for custom sound)")
+        if self.face_cascade.empty():
+            raise ValueError("Error: Could not load face cascade classifier")
     
-    def play_alert(self):
-        """Play audio alert with cooldown"""
-        current_time = time.time()
-        if current_time - self.last_alert_time > self.alert_cooldown:
-            self.alert_sound.play()
-            self.last_alert_time = current_time
-            self.warning_display_time = current_time
-            print(f"⚠️  ALERT: Phone detected at {datetime.now().strftime('%H:%M:%S')}")
-    
-    def detect_phone(self, frame):
-        """Detect mobile phone using YOLO"""
-        results = self.yolo_model(frame, verbose=False)
-        phone_found = False
-        
-        for result in results:
-            boxes = result.boxes
-            for box in boxes:
-                cls = int(box.cls[0])
-                conf = float(box.conf[0])
-                
-                # Class 67 is 'cell phone' in COCO dataset
-                if cls == 67 and conf > 0.5:
-                    phone_found = True
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    
-                    # Draw bounding box
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 3)
-                    cv2.putText(frame, f'Phone {conf:.2f}', (x1, y1-10),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-        
-        return phone_found, frame
-    
-    def detect_face(self, frame):
-        """Detect face using OpenCV"""
+    def detect(self, frame):
+        """Detect faces in the frame"""
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        # More sensitive face detection
+        # Optimized parameters for better detection
         faces = self.face_cascade.detectMultiScale(
             gray, 
-            scaleFactor=1.05,  # Smaller scale factor for more detection
-            minNeighbors=3,    # Lower threshold for more detections
+            scaleFactor=1.05,  # Smaller for more detection
+            minNeighbors=3,    # Lower for more sensitivity
             minSize=(30, 30)   # Minimum face size
         )
-        face_found = len(faces) > 0
         
+        # Draw rectangles and labels for detected faces
         for (x, y, w, h) in faces:
             cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
             cv2.putText(frame, 'Face Detected', (x, y-10),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         
-        return face_found, frame
+        return len(faces) > 0, frame
+
+class PhoneDetector:
+    """Handles mobile phone detection using YOLOv8"""
     
-    def log_distraction(self, start_time, end_time):
-        """Log distraction event"""
-        duration = end_time - start_time
-        self.distraction_log.append({
-            'start': datetime.fromtimestamp(start_time).strftime('%H:%M:%S'),
-            'end': datetime.fromtimestamp(end_time).strftime('%H:%M:%S'),
-            'duration': duration
-        })
-        self.total_distraction_time += duration
+    def __init__(self):
+        try:
+            self.model = YOLO('yolov8n.pt')  # Load YOLOv8 nano model
+            print("✓ YOLO model loaded successfully")
+        except Exception as e:
+            raise ValueError(f"Error loading YOLO model: {e}")
     
-    def draw_interface(self, frame):
-        """Draw monitoring interface"""
+    def detect(self, frame):
+        """Detect phones in the frame"""
+        phone_found = False
+        
+        try:
+            results = self.model(frame, verbose=False, conf=0.5)  # Confidence threshold
+            
+            for result in results:
+                boxes = result.boxes
+                for box in boxes:
+                    cls = int(box.cls[0])
+                    conf = float(box.conf[0])
+                    
+                    # Class 67 is 'cell phone' in COCO dataset
+                    if cls == 67 and conf > 0.5:
+                        phone_found = True
+                        x1, y1, x2, y2 = map(int, box.xyxy[0])
+                        
+                        # Draw bounding box
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 3)
+                        cv2.putText(frame, 'Phone Detected - Focus on Study', (x1, y1-10),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        
+        except Exception as e:
+            print(f"Warning: Phone detection error: {e}")
+        
+        return phone_found, frame
+
+class AudioAlert:
+    """Handles audio alert system"""
+    
+    def __init__(self):
+        pygame.mixer.init()
+        self.alert_sound = None
+        self.last_alert_time = 0
+        self.cooldown = 5  # seconds between alerts
+        
+        # Try to load custom alert sound
+        if os.path.exists('alert.wav'):
+            try:
+                self.alert_sound = pygame.mixer.Sound('alert.wav')
+                print("✓ Loaded custom alert sound: alert.wav")
+            except Exception as e:
+                print(f"Warning: Could not load custom sound: {e}")
+                self._create_default_sound()
+        else:
+            self._create_default_sound()
+    
+    def _create_default_sound(self):
+        """Create a default beep sound"""
+        sample_rate = 22050
+        duration = 0.5
+        frequency = 800
+        
+        # Generate sine wave
+        t = np.linspace(0, duration, int(sample_rate * duration))
+        wave = np.sin(2 * np.pi * frequency * t)
+        
+        # Convert to 16-bit format
+        wave = (wave * 32767).astype(np.int16)
+        
+        # Create stereo sound
+        stereo_wave = np.column_stack((wave, wave))
+        
+        self.alert_sound = pygame.sndarray.make_sound(stereo_wave)
+        print("✓ Using default beep sound (add alert.wav for custom sound)")
+    
+    def play_alert(self, face_detected=False):
+        """
+        Play alert only if face is detected and cooldown has passed
+        This ensures alert only when student is present but distracted
+        """
+        current_time = time.time()
+        
+        if face_detected and (current_time - self.last_alert_time) > self.cooldown:
+            try:
+                self.alert_sound.play()
+                self.last_alert_time = current_time
+                print(f"⚠️ ALERT: Phone detected while face visible at {datetime.now().strftime('%H:%M:%S')}")
+                return True
+            except Exception as e:
+                print(f"Warning: Could not play alert sound: {e}")
+        
+        return False
+
+class DistractionLogger:
+    """Handles logging of distraction events"""
+    
+    def __init__(self):
+        self.distraction_log = []
+        self.phone_detection_start = None
+        self.total_distraction_time = 0
+    
+    def start_distraction(self, timestamp):
+        """Mark start of distraction period"""
+        if self.phone_detection_start is None:
+            self.phone_detection_start = timestamp
+    
+    def end_distraction(self, timestamp):
+        """Mark end of distraction period and log it"""
+        if self.phone_detection_start:
+            duration = timestamp - self.phone_detection_start
+            self.distraction_log.append({
+                'start': datetime.fromtimestamp(self.phone_detection_start).strftime('%H:%M:%S'),
+                'end': datetime.fromtimestamp(timestamp).strftime('%H:%M:%S'),
+                'duration': duration
+            })
+            self.total_distraction_time += duration
+            self.phone_detection_start = None
+    
+    def save_report(self):
+        """Save distraction report to file"""
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f'study_report_{timestamp}.txt'
+        
+        try:
+            with open(filename, 'w') as f:
+                f.write("="*60 + "\n")
+                f.write("AI STUDY MONITOR - SESSION REPORT\n")
+                f.write("="*60 + "\n\n")
+                f.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                
+                f.write(f"Total Distractions: {len(self.distraction_log)}\n")
+                f.write(f"Total Distraction Time: {int(self.total_distraction_time)} seconds\n")
+                
+                if self.distraction_log:
+                    avg_time = self.total_distraction_time / len(self.distraction_log)
+                    f.write(f"Average Distraction Duration: {avg_time:.1f} seconds\n\n")
+                    
+                    f.write("Distraction Details:\n")
+                    f.write("-"*60 + "\n")
+                    for i, log in enumerate(self.distraction_log, 1):
+                        f.write(f"{i}. Start: {log['start']} | End: {log['end']} | Duration: {log['duration']:.1f}s\n")
+                else:
+                    f.write("No distractions recorded - Great focus!\n")
+                
+                f.write("\n" + "="*60 + "\n")
+            
+            print(f"✓ Report saved: {filename}")
+            return filename
+        
+        except Exception as e:
+            print(f"Error saving report: {e}")
+            return None
+
+class StudyMonitorUI:
+    """Handles the monitoring interface display"""
+    
+    def __init__(self):
+        self.warning_display_time = 0
+    
+    def draw_interface(self, frame, face_detected, phone_detected, distraction_logger):
+        """Draw the monitoring interface overlay"""
         h, w = frame.shape[:2]
         
         # Semi-transparent overlay for stats
         overlay = frame.copy()
-        cv2.rectangle(overlay, (10, 10), (400, 180), (0, 0, 0), -1)
+        cv2.rectangle(overlay, (10, 10), (450, 200), (0, 0, 0), -1)
         frame = cv2.addWeighted(frame, 0.7, overlay, 0.3, 0)
         
         # Title
@@ -140,24 +261,24 @@ class StudyMonitor:
                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
         
         # Status indicators
-        face_status = "✓ Detected" if self.face_detected else "✗ Not Detected"
-        face_color = (0, 255, 0) if self.face_detected else (0, 0, 255)
+        face_status = "✓ Detected" if face_detected else "✗ Not Detected"
+        face_color = (0, 255, 0) if face_detected else (0, 0, 255)
         cv2.putText(frame, f'Face: {face_status}', (20, 75),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, face_color, 2)
         
-        phone_status = "✗ Clear" if not self.phone_detected else "⚠ DETECTED!"
-        phone_color = (0, 255, 0) if not self.phone_detected else (0, 0, 255)
+        phone_status = "✗ Clear" if not phone_detected else "⚠ DETECTED!"
+        phone_color = (0, 255, 0) if not phone_detected else (0, 0, 255)
         cv2.putText(frame, f'Phone: {phone_status}', (20, 105),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, phone_color, 2)
         
         # Statistics
-        cv2.putText(frame, f'Distractions: {len(self.distraction_log)}', (20, 135),
+        cv2.putText(frame, f'Distractions: {len(distraction_logger.distraction_log)}', (20, 135),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        cv2.putText(frame, f'Total Time: {int(self.total_distraction_time)}s', (20, 160),
+        cv2.putText(frame, f'Total Time: {int(distraction_logger.total_distraction_time)}s', (20, 160),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         
         # Warning message when phone detected
-        if self.phone_detected and time.time() - self.warning_display_time < 3:
+        if phone_detected and time.time() - self.warning_display_time < 3:
             warning = "PUT AWAY YOUR PHONE!"
             text_size = cv2.getTextSize(warning, cv2.FONT_HERSHEY_SIMPLEX, 1.2, 3)[0]
             text_x = (w - text_size[0]) // 2
@@ -174,109 +295,91 @@ class StudyMonitor:
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
         
         return frame
+
+class StudyMonitor:
+    """
+    Main Study Monitor class that coordinates all components
     
-    def save_report(self):
-        """Save distraction report to file"""
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f'study_report_{timestamp}.txt'
-        
-        with open(filename, 'w') as f:
-            f.write("="*50 + "\n")
-            f.write("AI STUDY MONITOR - SESSION REPORT\n")
-            f.write("="*50 + "\n\n")
-            f.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-            
-            f.write(f"Total Distractions: {len(self.distraction_log)}\n")
-            f.write(f"Total Distraction Time: {int(self.total_distraction_time)} seconds\n")
-            f.write(f"Average Distraction: {int(self.total_distraction_time/len(self.distraction_log)) if self.distraction_log else 0} seconds\n\n")
-            
-            if self.distraction_log:
-                f.write("Distraction Log:\n")
-                f.write("-"*50 + "\n")
-                for i, log in enumerate(self.distraction_log, 1):
-                    f.write(f"{i}. Start: {log['start']} | End: {log['end']} | Duration: {log['duration']:.1f}s\n")
-            
-            f.write("\n" + "="*50 + "\n")
-        
-        print(f"✓ Report saved: {filename}")
-        return filename
+    This class implements a computer vision system for monitoring study sessions.
+    It uses separate components for webcam handling, face detection, phone detection,
+    audio alerts, and logging to maintain clean separation of concerns.
+    """
     
-    def run(self, demo_mode=False):
+    def __init__(self):
+        """Initialize all components with error handling"""
+        try:
+            print("Initializing AI Study Monitor...")
+            
+            # Initialize components
+            self.webcam = WebcamHandler()
+            self.face_detector = FaceDetector()
+            self.phone_detector = PhoneDetector()
+            self.audio_alert = AudioAlert()
+            self.logger = DistractionLogger()
+            self.ui = StudyMonitorUI()
+            
+            # Tracking variables
+            self.phone_detected = False
+            self.frame_count = 0
+            
+            print("✓ All components initialized successfully")
+            
+        except Exception as e:
+            print(f"❌ Initialization error: {e}")
+            raise
+    
+    def run_monitoring(self):
         """Main monitoring loop"""
-        print("\n" + "="*50)
+        print("\n" + "="*60)
         print("AI STUDY MONITORING SYSTEM")
-        print("="*50)
+        print("="*60)
         
-        if demo_mode:
-            print("DEMO MODE: Running without webcam")
-            print("✓ Using simulated data for demonstration")
-            self.run_demo()
-            return
-        
-        print("Starting webcam...")
-        
-        # Try to access webcam, try different indices if 0 doesn't work
-        cap = None
-        for i in range(5):  # Try indices 0 to 4
-            cap = cv2.VideoCapture(i)
-            if cap.isOpened():
-                print(f"✓ Webcam accessed successfully on index {i}")
-                break
-        else:
-            print("ERROR: Cannot access webcam on any index (0-4)!")
+        # Initialize webcam
+        if not self.webcam.initialize_camera():
+            print("❌ ERROR: Cannot access webcam!")
             print("Please check:")
-            print("- Webcam is not in use by another application")
-            print("- Webcam permissions are granted")
-            print("- Webcam is properly connected")
-            print("\nAlternatively, run with demo mode: python 'ai project.py' demo")
+            print("- Webcam is connected and not in use")
+            print("- Camera permissions are granted")
             return
         
-        print("✓ Webcam started successfully")
-        print("\nMonitoring active...")
-        print("- Phone detection: ENABLED")
-        print("- Face tracking: ENABLED")
-        print("- Audio alerts: ENABLED")
-        print("\nPress 'Q' to quit | Press 'S' to save report\n")
+        print("\n🎯 Monitoring active...")
+        print("- Face detection: ENABLED")
+        print("- Phone detection: ENABLED") 
+        print("- Audio alerts: ENABLED (only when face + phone detected)")
+        print("\nControls: Q=Quit | S=Save Report\n")
         
         try:
             while True:
-                ret, frame = cap.read()
+                # Read frame
+                ret, frame = self.webcam.read_frame()
                 if not ret:
-                    print("ERROR: Failed to capture frame")
+                    print("❌ ERROR: Failed to capture frame")
                     break
                 
                 self.frame_count += 1
                 
-                # Flip frame for mirror effect
-                frame = cv2.flip(frame, 1)
-                
-                # Detect face
-                self.face_detected, frame = self.detect_face(frame)
-                
-                # Detect phone
-                phone_detected_now, frame = self.detect_phone(frame)
+                # Detect face and phone
+                face_detected, frame = self.face_detector.detect(frame)
+                phone_detected_now, frame = self.phone_detector.detect(frame)
                 
                 # Handle phone detection state changes
                 if phone_detected_now and not self.phone_detected:
                     # Phone just appeared
                     self.phone_detected = True
-                    self.phone_detection_start = time.time()
-                    self.play_alert()
-                    self.phone_detections += 1
+                    self.logger.start_distraction(time.time())
+                    
+                    # Play alert ONLY if face is also detected
+                    if face_detected:
+                        self.audio_alert.play_alert(face_detected=True)
+                        self.ui.warning_display_time = time.time()
                     
                 elif not phone_detected_now and self.phone_detected:
-                    # Phone removed
+                    # Phone removed - end distraction
                     self.phone_detected = False
-                    if self.phone_detection_start:
-                        self.log_distraction(self.phone_detection_start, time.time())
-                        self.phone_detection_start = None
-                
-                # Track no face
-                if not self.face_detected:
-                    self.no_face_count += 1
+                    self.logger.end_distraction(time.time())
                 
                 # Draw interface
-                frame = self.draw_interface(frame)
+                frame = self.ui.draw_interface(frame, face_detected, self.phone_detected, self.logger)
                 
                 # Display frame
                 cv2.imshow('AI Study Monitor', frame)
@@ -284,116 +387,50 @@ class StudyMonitor:
                 # Handle keyboard input
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q') or key == ord('Q'):
-                    print("\n\nShutting down...")
+                    print("\n⏹️ Shutting down...")
                     break
                 elif key == ord('s') or key == ord('S'):
-                    self.save_report()
+                    self.logger.save_report()
         
         finally:
             # Cleanup
-            if self.phone_detected and self.phone_detection_start:
-                self.log_distraction(self.phone_detection_start, time.time())
+            if self.phone_detected and self.logger.phone_detection_start:
+                self.logger.end_distraction(time.time())
             
-            cap.release()
+            self.webcam.release()
             cv2.destroyAllWindows()
             
             # Final report
-            print("\n" + "="*50)
+            print("\n" + "="*60)
             print("SESSION SUMMARY")
-            print("="*50)
-            print(f"Total distractions: {len(self.distraction_log)}")
-            print(f"Total distraction time: {int(self.total_distraction_time)} seconds")
-            print(f"Frames processed: {self.frame_count}")
+            print("="*60)
+            print(f"Total frames processed: {self.frame_count}")
+            print(f"Total distractions: {len(self.logger.distraction_log)}")
+            print(f"Total distraction time: {int(self.logger.total_distraction_time)} seconds")
             
-            # Auto-save report
-            filename = self.save_report()
-            print(f"\nFull report saved to: {filename}")
-            print("\nThank you for using AI Study Monitor!")
+            # Auto-save final report
+            filename = self.logger.save_report()
+            if filename:
+                print(f"\n📄 Final report saved to: {filename}")
+            print("\n🙏 Thank you for using AI Study Monitor!")
 
-    def run_demo(self):
-        """Run in demo mode without webcam - simulates monitoring"""
-        print("\nDemo mode active...")
-        print("- Phone detection: SIMULATED")
-        print("- Face tracking: SIMULATED")
-        print("- Audio alerts: ENABLED")
-        print("\nPress 'Q' to quit | Press 'S' to save report | Press 'P' to simulate phone detection\n")
-        
-        # Create a demo window
-        demo_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        
-        try:
-            while True:
-                self.frame_count += 1
-                
-                # Simulate random face detection
-                self.face_detected = np.random.random() > 0.1  # 90% chance of face detected
-                
-                # Simulate occasional phone detection
-                phone_detected_now = np.random.random() > 0.95  # 5% chance per frame
-                
-                # Handle phone detection state changes
-                if phone_detected_now and not self.phone_detected:
-                    self.phone_detected = True
-                    self.phone_detection_start = time.time()
-                    self.play_alert()
-                    self.phone_detections += 1
-                    print("DEMO: Phone detected!")
-                    
-                elif not phone_detected_now and self.phone_detected:
-                    self.phone_detected = False
-                    if self.phone_detection_start:
-                        self.log_distraction(self.phone_detection_start, time.time())
-                        self.phone_detection_start = None
-                
-                # Track no face
-                if not self.face_detected:
-                    self.no_face_count += 1
-                
-                # Draw interface on demo frame
-                demo_frame = self.draw_interface(demo_frame)
-                
-                # Add demo text
-                cv2.putText(demo_frame, 'DEMO MODE - No Camera Required', (200, 250),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-                
-                # Display demo frame
-                cv2.imshow('AI Study Monitor - DEMO MODE', demo_frame)
-                
-                # Handle keyboard input
-                key = cv2.waitKey(100) & 0xFF  # Slower update for demo
-                if key == ord('q') or key == ord('Q'):
-                    print("\n\nShutting down demo...")
-                    break
-                elif key == ord('s') or key == ord('S'):
-                    self.save_report()
-                elif key == ord('p') or key == ord('P'):
-                    # Manual phone trigger for demo
-                    if not self.phone_detected:
-                        self.phone_detected = True
-                        self.phone_detection_start = time.time()
-                        self.play_alert()
-                        self.phone_detections += 1
-                        print("DEMO: Manual phone detection triggered!")
-        
-        finally:
-            cv2.destroyAllWindows()
-            
-            # Final report
-            print("\n" + "="*50)
-            print("DEMO SESSION SUMMARY")
-            print("="*50)
-            print(f"Total distractions: {len(self.distraction_log)}")
-            print(f"Total distraction time: {int(self.total_distraction_time)} seconds")
-            print(f"Frames processed: {self.frame_count}")
-            
-            # Auto-save report
-            filename = self.save_report()
-            print(f"\nDemo report saved to: {filename}")
-            print("\nThank you for trying AI Study Monitor Demo!")
-
-if __name__ == "__main__":
-    import sys
+def main():
+    """Main function with demo mode support"""
     demo_mode = len(sys.argv) > 1 and sys.argv[1].lower() == 'demo'
     
-    monitor = StudyMonitor()
-    monitor.run(demo_mode=demo_mode)
+    if demo_mode:
+        print("Demo mode not implemented in refactored version")
+        print("Please run without 'demo' argument for full functionality")
+        return
+    
+    try:
+        monitor = StudyMonitor()
+        monitor.run_monitoring()
+    except KeyboardInterrupt:
+        print("\n⏹️ Monitoring stopped by user")
+    except Exception as e:
+        print(f"❌ Fatal error: {e}")
+        print("Please check your setup and try again")
+
+if __name__ == "__main__":
+    main()
